@@ -154,6 +154,7 @@ class Eval(Unary):
             raise SemanticError("1-1-1-22")
         try:
             conn = duckdb.connect(database=":memory:", read_only=False)
+            conn.execute("SET enable_progress_bar = false")
             conn.execute("SET enable_external_access = false")
             conn.execute("SET allow_unsigned_extensions = false")
             conn.execute("SET allow_community_extensions = false")

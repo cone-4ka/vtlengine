@@ -45,6 +45,8 @@ def query_connection() -> Iterator[duckdb.DuckDBPyConnection]:
     when it closes, so threads can query at the same time.
     """
     database, conn = _database.cursor()
+    # No progress bar: DuckDB writes it to stdout, where the caller of the engine reads its own output
+    conn.execute("SET enable_progress_bar = false")
     try:
         yield conn
     except duckdb.FatalException:
