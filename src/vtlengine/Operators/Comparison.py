@@ -1,10 +1,11 @@
 import operator
 import re
 from copy import copy
-from typing import Any, Optional, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 import vtlengine.Operators as Operator
 from vtlengine.AST.Grammar.tokens import (
@@ -33,6 +34,8 @@ from vtlengine.Model import Component, DataComponent, Dataset, Role, Scalar, Sca
 from vtlengine.Utils.__Virtual_Assets import VirtualCounter
 from vtlengine.Utils._dataframe import merge_frames
 from vtlengine.Utils._number_config import (
+    _get_rel_tol,
+    get_effective_comparison_digits,
     numbers_are_equal,
     numbers_are_greater_equal,
     numbers_are_less_equal,
@@ -95,6 +98,69 @@ def _tolerance_applies(*values: Any) -> bool:
     )
 
 
+_FAST_OPS = {EQ, NEQ, GT, GTE, LT, LTE}
+
+
+def _compare(op: str, a: Any, b: Any) -> Any:
+    if op == EQ:
+        return a == b
+    if op == NEQ:
+        return a != b
+    if op == GT:
+        return a > b
+    if op == GTE:
+        return a >= b
+    if op == LT:
+        return a < b
+    return a <= b
+
+
+def _numeric_values(series: Any) -> Optional[Tuple[np.ndarray, np.ndarray, bool]]:
+    """(values, null mask, is float) of a numeric Series, or None for any other one."""
+    dtype = series.dtype
+    if pd.api.types.is_bool_dtype(dtype) or not pd.api.types.is_numeric_dtype(dtype):
+        return None
+    null = series.isna().to_numpy()
+    is_float = pd.api.types.is_float_dtype(dtype)
+    values = series.to_numpy(dtype="float64" if is_float else "int64", na_value=np.nan if is_float else 0)
+    return values, null, is_float
+
+
+def _vectorized(op: str, series: Any, scalar: Any, series_left: bool) -> Any:
+    """A comparison of a Series with a scalar on whole arrays, with the result op_func gives value by value:
+    Strings compare as Python strings; numbers use the tolerance of numbers_are_equal exactly when a float
+    is involved, and never for > and <. None for operands of another kind: the caller maps the values."""
+    if op not in _FAST_OPS or isinstance(scalar, (bool, np.bool_)):
+        return None
+    if isinstance(scalar, str) and isinstance(series.dtype, pd.StringDtype):
+        null = series.isna().to_numpy()
+        values = series.to_numpy(dtype=object, na_value="")
+        res = _compare(op, values, scalar) if series_left else _compare(op, scalar, values)
+        return _bools(np.asarray(res, dtype=bool), null, series.index)
+    if not isinstance(scalar, (int, float, np.integer, np.floating)):
+        return None
+    got = _numeric_values(series)
+    if got is None:
+        return None
+    values, null, is_float = got
+    tolerance = is_float or isinstance(scalar, (float, np.floating))
+    rel = _get_rel_tol(get_effective_comparison_digits()) if tolerance else None
+    a, b = (values.astype("float64"), float(scalar)) if tolerance else (values, scalar)
+    if not series_left:
+        a, b = b, a
+    with np.errstate(invalid="ignore"):
+        if rel is None or op in (GT, LT):
+            res = _compare(op, a, b)
+        else:
+            eq = (a == b) | (np.abs(np.subtract(a, b)) <= rel * np.maximum(np.abs(a), np.abs(b)))
+            res = {EQ: eq, NEQ: ~eq, GTE: eq | (a > b), LTE: eq | (a < b)}[op]
+    return _bools(np.asarray(res, dtype=bool), null, series.index)
+
+
+def _bools(values: np.ndarray, null: np.ndarray, index: Any) -> Any:
+    return pd.Series(pd.arrays.ArrowExtensionArray(pa.array(values, mask=null, type=pa.bool_())), index=index)
+
+
 class Binary(Operator.Binary):
     """
     Binary comparison operator. It returns a boolean.
@@ -142,6 +208,10 @@ class Binary(Operator.Binary):
                     series = to_strings(series)
                 elif isinstance(first_non_null, (int, float)):
                     series = series.astype("double[pyarrow]")
+
+        fast = _vectorized(cls.op, series, scalar, series_left)
+        if fast is not None:
+            return fast
 
         # Use op_func if it's overridden (not from Binary base class)
         # to support tolerance-based number comparisons

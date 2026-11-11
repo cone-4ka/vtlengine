@@ -1,6 +1,7 @@
 from copy import copy
 from typing import Any, Optional, Type, Union
 
+import numpy as np
 import pandas as pd
 
 import vtlengine.Operators as Operator
@@ -10,7 +11,10 @@ from vtlengine.DataTypes import (
     EXPLICIT_WITHOUT_MASK_TYPE_PROMOTION_MAPPING,
     IMPLICIT_TYPE_PROMOTION_MAPPING,
     SCALAR_TYPES_CLASS_REVERSE,
+    Integer,
+    Number,
     ScalarType,
+    String,
 )
 from vtlengine.Exceptions import InputValidationException, RunTimeError, SemanticError
 from vtlengine.Model import Component, DataComponent, Dataset, Role, Scalar
@@ -19,6 +23,38 @@ from vtlengine.Utils.__Virtual_Assets import VirtualCounter
 duration_mapping = {"A": 6, "S": 5, "Q": 4, "M": 3, "W": 2, "D": 1}
 
 ALL_MODEL_DATA_TYPES = Union[Dataset, Scalar, DataComponent]
+
+
+
+def _fast_cast(data: Any, from_type: Any, to_type: Any) -> Any:
+    """The casts that programs make on every Data Point, on whole arrays, with the result of the value-by-value
+    cast: String or Number to Integer (only when every value is a whole number; otherwise the value-by-value
+    cast raises its error) and Integer to String. None for any other cast, or when a value does not fit."""
+    if data is None or not len(data):
+        return None
+    if to_type is Integer and from_type in (String, Number):
+        values = data.dropna()
+        # A String is an Integer only as int() reads it: "2021" yes, "2021.0" no (the value-by-value cast raises)
+        if from_type is String and not values.astype(str).str.fullmatch(r"\s*[+-]?\d{1,15}\s*").all():
+            return None
+        numbers = pd.to_numeric(values.astype(object), errors="coerce")
+        if numbers.isna().any() or not np.all(np.isfinite(numbers.to_numpy(dtype="float64"))):
+            return None
+        floats = numbers.to_numpy(dtype="float64")
+        if np.any(floats != np.trunc(floats)) or np.any(np.abs(floats) >= 2**53):
+            return None
+        out = pd.Series(pd.NA, index=data.index, dtype=Integer.dtype())
+        out.loc[values.index] = floats.astype("int64")
+        return out
+    if to_type is String and from_type is Integer:
+        values = data.dropna()
+        floats = values.to_numpy(dtype="float64")
+        if np.any(floats != np.trunc(floats)) or np.any(np.abs(floats) >= 2**53):
+            return None
+        out = pd.Series(pd.NA, index=data.index, dtype=String.dtype())
+        out.loc[values.index] = [str(v) for v in floats.astype("int64").tolist()]
+        return out
+    return None
 
 
 class Cast(Operator.Unary):
@@ -59,6 +95,9 @@ class Cast(Operator.Unary):
         cls, data: Any, from_type: Type[ScalarType], to_type: Type[ScalarType]
     ) -> Any:
         """Cast the component to the type to_type without mask."""
+        fast = _fast_cast(data, from_type, to_type)
+        if fast is not None:
+            return fast
         if to_type.is_included(IMPLICIT_TYPE_PROMOTION_MAPPING[from_type]):
             result = data.map(lambda x: to_type.implicit_cast(x, from_type), na_action="ignore")
         else:
