@@ -159,6 +159,10 @@ class String(ScalarType):
 
     @classmethod
     def explicit_cast(cls, value: Any, from_type: Any) -> str:
+        # An Integer column holding a null is a float column in pandas: 3 arrives as 3.0 and str
+        # gave "3.0", while the same Integer without nulls gave "3"
+        if from_type is Integer and isinstance(value, (float, np.floating)) and float(value).is_integer():
+            return str(int(value))
         if from_type in {
             Integer,
             Number,
