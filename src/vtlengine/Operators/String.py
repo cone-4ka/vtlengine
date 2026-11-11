@@ -266,10 +266,14 @@ class Parameterized(Unary):
         else:
             length = args[0]
 
+        # The operand of a component expression can carry any index (an if-then-else branch keeps
+        # the labels of its Data Points): the parameter series are built on the same labels, or
+        # the DataFrame below aligns them by label and a scalar parameter turns into null
+        index = length if isinstance(length, pd.Index) else range(length)
         if param is None:
-            return pd.Series(index=range(length), dtype="string[pyarrow]")
+            return pd.Series(index=index, dtype="string[pyarrow]")
         if isinstance(param, Scalar):
-            return pd.Series(data=param.value, index=range(length), dtype="string[pyarrow]")
+            return pd.Series(data=param.value, index=index, dtype="string[pyarrow]")
         return param.data
 
     @classmethod
@@ -278,8 +282,8 @@ class Parameterized(Unary):
         param2: Optional[Union[DataComponent, Scalar]]
         data, param1, param2 = (args + (None, None))[:3]
 
-        param1_data = cls.generate_series_from_param(param1, len(data))
-        param2_data = cls.generate_series_from_param(param2, len(data))
+        param1_data = cls.generate_series_from_param(param1, data.index)
+        param2_data = cls.generate_series_from_param(param2, data.index)
         df = pd.DataFrame([data, param1_data, param2_data]).T
         n1, n2, n3 = df.columns
         return df.apply(lambda x: cls.op_func(x[n1], x[n2], x[n3]), axis=1)
@@ -613,9 +617,9 @@ class Instr(Parameterized):
         param2: Optional[Union[DataComponent, Scalar]],
         param3: Optional[Union[DataComponent, Scalar]],
     ) -> Any:
-        param1_data = cls.generate_series_from_param(param1, len(data))
-        param2_data = cls.generate_series_from_param(param2, len(data))
-        param3_data = cls.generate_series_from_param(param3, len(data))
+        param1_data = cls.generate_series_from_param(param1, data.index)
+        param2_data = cls.generate_series_from_param(param2, data.index)
+        param3_data = cls.generate_series_from_param(param3, data.index)
 
         df = pd.DataFrame([data, param1_data, param2_data, param3_data]).T
         n1, n2, n3, n4 = df.columns
