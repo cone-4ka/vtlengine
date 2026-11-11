@@ -964,6 +964,7 @@ class InterpreterAnalyzer(ASTTemplate):
         if self.is_from_having:
             raise SemanticError("1-1-3-1", op=node.op)
         component_name = None
+        carried_names: List[str] = []
         analytic_component_name: Optional[str] = None
         operand_id_collision = False
         if self.is_from_regular_aggregation:
@@ -1006,7 +1007,6 @@ class InterpreterAnalyzer(ASTTemplate):
                 # Any existing component can be ordered by, as in the dataset-level
                 # form: carry the ones named in the ordering into the virtual
                 # dataset so the analytic can sort by them (#1026)
-                carried_names = []
                 if node.order_by is not None:
                     for order_by in node.order_by:
                         order_name = order_by.component
@@ -1053,7 +1053,7 @@ class InterpreterAnalyzer(ASTTemplate):
                 for o in node.order_by:
                     if o.component in self.udo_params[-1]:
                         o.component = self.udo_params[-1][o.component]
-                    elif o.component not in operand.get_identifiers_names():
+                    elif o.component not in operand.components:
                         raise SemanticError(
                             "1-2-21",
                             comp_type="Component",
@@ -1144,7 +1144,8 @@ class InterpreterAnalyzer(ASTTemplate):
 
         # # Extracting the component we need (only measure)
         if analytic_component_name is None or node.op == COUNT:
-            measure_name = result.get_measures_names()[0]
+            # The Measures carried only for the ordering are not the result of the analytic
+            measure_name = [m for m in result.get_measures_names() if m not in carried_names][0]
         else:
             measure_name = analytic_component_name
         output_name = (

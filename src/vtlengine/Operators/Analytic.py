@@ -180,7 +180,7 @@ class Analytic(Operator.Unary):
                     role=Role.MEASURE,
                     nullable=operand.components[component_name].nullable,
                 )
-                if component_name in result_components:
+                if component_name in result_components and component_name != measure_name:
                     del result_components[component_name]
             if cls.op in (LAG, LEAD) and component_name in result_components:
                 result_components[component_name] = cls._as_nullable(

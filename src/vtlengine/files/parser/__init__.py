@@ -282,6 +282,10 @@ def _validate_pandas(
     # values assigns a new column.
     data = data.copy(deep=False)
 
+    # Operators address rows by position (filter keeps iloc[condition labels]), so a DataFrame
+    # with another index loses or misplaces Data Points; normalize it to 0..n-1
+    data = data.reset_index(drop=True)
+
     # Strip UTF-8 BOM from column names (e.g. DataFrames read from BOM-encoded CSVs)
     bom_stripped = [str(col).removeprefix("\ufeff") for col in data.columns]
     data.columns = pd.Index(bom_stripped)
