@@ -1286,7 +1286,18 @@ class InterpreterAnalyzer(ASTTemplate):
                 nullable=self.aggregation_dataset.components[node.value].nullable,
             )
         if self.is_from_regular_aggregation:
-            if self.is_from_join and node.value in self.datasets:
+            # A Component of the joined Data Set named like a Data Set of the script is the Component:
+            # in a clause of the join a name is read in the join first (inner_join(Y as A, d15 as B
+            # calc v := obs_value * d15) with d15 both the operand and its Measure).
+            joined = (
+                self.regular_aggregation_dataset.get_components_names()
+                if self.regular_aggregation_dataset is not None
+                else []
+            )
+            in_join = node.value in joined or any(
+                "#" in name and name.split("#")[1] == node.value for name in joined
+            )
+            if self.is_from_join and node.value in self.datasets and not in_join:
                 return copy(self.datasets[node.value])
             if self.regular_aggregation_dataset is not None:
                 if self.scalars is not None and node.value in self.scalars:

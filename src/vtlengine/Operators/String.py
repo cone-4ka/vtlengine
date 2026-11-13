@@ -255,6 +255,18 @@ class Parameterized(Unary):
             return cls.dataset_evaluation(operand, param1, param2)
         if isinstance(operand, DataComponent):
             return cls.component_evaluation(operand, param1, param2)
+        # A literal operand with a component parameter (substr("abc", pos, 1)) is evaluated row by row:
+        # the literal is broadcast to the rows of the component.
+        component = next((p for p in (param1, param2) if isinstance(p, DataComponent)), None)
+        if component is not None and component.data is not None:
+            broadcast = DataComponent(
+                name=component.name,
+                data=pd.Series([operand.value] * len(component.data), index=component.data.index),
+                data_type=operand.data_type,
+                role=component.role,
+                nullable=True,
+            )
+            return cls.component_evaluation(broadcast, param1, param2)
         return cls.scalar_evaluation(operand, param1, param2)
 
     @classmethod
@@ -273,7 +285,10 @@ class Parameterized(Unary):
         if param is None:
             return pd.Series(index=index, dtype="string[pyarrow]")
         if isinstance(param, Scalar):
-            return pd.Series(data=param.value, index=index, dtype="string[pyarrow]")
+            # The value keeps its type: an integer literal next to a component parameter
+            # (instr(tp, "Q", length(tp) - 3, 1)) is no string
+            dtype = "string[pyarrow]" if isinstance(param.value, str) or param.value is None else object
+            return pd.Series(data=param.value, index=index, dtype=dtype)
         return param.data
 
     @classmethod
@@ -284,9 +299,10 @@ class Parameterized(Unary):
 
         param1_data = cls.generate_series_from_param(param1, data.index)
         param2_data = cls.generate_series_from_param(param2, data.index)
-        df = pd.DataFrame([data, param1_data, param2_data]).T
-        n1, n2, n3 = df.columns
-        return df.apply(lambda x: cls.op_func(x[n1], x[n2], x[n3]), axis=1)
+        # Positional columns: the operand and a parameter computed from it (substr(tp, length(tp), 1))
+        # carry the same name, and a frame with repeated names gives a Series per cell.
+        df = pd.DataFrame({0: data, 1: param1_data, 2: param2_data}).astype(object)
+        return df.apply(lambda x: cls.op_func(x[0], x[1], x[2]), axis=1)
 
 
 class Substr(Parameterized):
@@ -621,9 +637,8 @@ class Instr(Parameterized):
         param2_data = cls.generate_series_from_param(param2, data.index)
         param3_data = cls.generate_series_from_param(param3, data.index)
 
-        df = pd.DataFrame([data, param1_data, param2_data, param3_data]).T
-        n1, n2, n3, n4 = df.columns
-        return df.apply(lambda x: cls.op_func(x[n1], x[n2], x[n3], x[n4]), axis=1)
+        df = pd.DataFrame({0: data, 1: param1_data, 2: param2_data, 3: param3_data}).astype(object)
+        return df.apply(lambda x: cls.op_func(x[0], x[1], x[2], x[3]), axis=1)
 
     @classmethod
     def dataset_evaluation(  # type: ignore[override]
