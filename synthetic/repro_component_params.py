@@ -5,6 +5,8 @@
 2. substr / instr with a parameter computed from the operand itself (substr(tp, length(tp), 1))
    built a frame with repeated column names and raised "The truth value of a Series is ambiguous";
    an integer literal next to such a parameter was turned into a string.
+4. instr of a string literal with a Component parameter (instr("…", c, n)) raised the same AttributeError: a scalar
+   operand with Component parameters is now broadcast to the Component's rows.
 3. In a calc clause of a join, a Component named like a Data Set of the script (the operand d15 with
    its Measure d15) was read as the Data Set, and the assignment failed with 'NoneType' object has
    no attribute 'name'.
@@ -27,6 +29,7 @@ DATA = {"X": pd.DataFrame({"geo": ["a", "a", "b"], "tp": ["2020-01", "2020-05", 
         "Y": pd.DataFrame({"geo": ["a", "b", "a"], "tp": ["2015", "2015", "2016"], "obs_value": [4.0, 5.0, 6.0]})}
 STRUCTURES = {"datasets": [structure(name, ["geo", "tp"]) for name in DATA]}
 CASES = [
+    ('R <- X[calc q := instr("2020-012020-05", tp, 1)];', [[1, 8, 0]]),
     ('R <- X[calc q := substr("111222333444", cast(substr(tp, 6, 2), integer), 1)];', [["1", "2", "4"]]),
     ("R <- Q[calc q := substr(tp, length(tp), 1)];", [["1", "2"]]),
     ('R <- Q[calc q := instr(tp, "Q", length(tp) - 3, 1)];', [[6, 6]]),

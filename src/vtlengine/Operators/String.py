@@ -726,6 +726,23 @@ class Instr(Parameterized):
         if isinstance(operand, DataComponent):
             return cls.component_evaluation(operand, param1, param2, param3)
         if isinstance(operand, Scalar):
+            component = next(
+                (p for p in (param1, param2, param3) if isinstance(p, DataComponent)), None
+            )
+            if component is not None:
+                # A scalar operand with Component parameters (substr(sc, c1, c2) inside calc) is
+                # evaluated per row: the scalar is broadcast to the Component's rows.
+                index = component.data.index if component.data is not None else None
+                broadcast = DataComponent(
+                    name=operand.name,
+                    data=pd.Series([operand.value] * len(index), index=index, dtype=object)
+                    if index is not None
+                    else pd.Series(dtype=object),
+                    data_type=operand.data_type,
+                    role=Role.MEASURE,
+                    nullable=True,
+                )
+                return cls.component_evaluation(broadcast, param1, param2, param3)
             return cls.scalar_evaluation(operand, param1, param2, param3)
 
     @classmethod
